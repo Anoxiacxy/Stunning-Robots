@@ -3,5 +3,5 @@ from gym.envs.registration import register
 
 register(
     id='Robots-v0',
-    entry_point='gym_extension.envs:RobotsEnv',
+    entry_point='environment.multi_robots:RobotsEnv',
 )
