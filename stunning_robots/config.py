@@ -28,4 +28,10 @@ gold = (255, 215, 0)
 black = (0, 0, 0)
 white = (255, 255, 255)
 
+GOAL_REWARD = +100
+WALL_COLLISION_REWARD = -1
+PEER_COLLISION_REWARD = -1
+OUT_OF_BOUNDARY_REWARD = -1
+POTENTIAL_REWARD = +1
+
 DEFAULT_CONFIG = load_map_config(os.path.join(os.path.dirname(__file__), "maps/data1.xlsx"))

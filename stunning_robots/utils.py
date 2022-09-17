@@ -1,8 +1,8 @@
 import os
-from typing import Tuple
+from typing import Tuple, Dict
 
 import numpy as np
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 
 
 def coordinate_to_position(coord: np.ndarray, playground_shape: np.ndarray) -> np.ndarray:
@@ -94,3 +94,18 @@ def load_map_config(config_path):
         "goal_pos": agents_dest_pos,
         "init_pos": agents_init_pos,
     }
+
+
+def save_rollout_xlsx(rollout_path, rollout_data: Dict):
+    print(rollout_path)
+    # 在内存创建一个工作簿
+    workbook = Workbook()
+    for page in rollout_data.keys():
+        data = rollout_data[page]
+        worksheet = workbook.create_sheet(page)
+        for row in range(1, len(data) + 1):
+            line = data[row - 1]
+            for col in range(1, len(line) + 1):
+                worksheet.cell(row=row, column=col).value = line[col - 1]
+    # 工作簿保存到磁盘
+    workbook.save(rollout_path)

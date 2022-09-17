@@ -3,7 +3,6 @@ import pygame
 
 from .config import *
 
-
 class ManualPolicy:
     def __init__(self, env, agent_id: int = 0, show_obs: bool = False):
 
@@ -30,7 +29,7 @@ class ManualPolicy:
         ), f"Manual Policy only applied to agent: {self.agent}, but got tag for {agent}."
         # set the default action
         action = self.default_action
-        if observation["action_mask"].all():
+        if observation is not None and observation["action_mask"].all():
             # if we get a key, override action using the dict
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN:
@@ -49,40 +48,6 @@ class ManualPolicy:
 
     @property
     def available_agents(self):
-        return self.env.agent_name_mapping
+        return self.env.agents
 
 
-def main():
-    from pettingzoo.butterfly import pistonball_v6
-
-    clock = pygame.time.Clock()
-
-    env = pistonball_v6.env()
-    env.reset()
-
-    manual_policy = pistonball_v6.ManualPolicy(env)
-
-    for agent in env.agent_iter():
-        clock.tick(env.metadata["render_fps"])
-
-        observation, reward, done, info = env.last()
-
-        if agent == manual_policy.agent:
-            action = manual_policy(observation, agent)
-        else:
-            action = env.action_space(agent).sample()
-
-        action = np.array(action)
-        action = action.reshape(
-            1,
-        )
-        env.step(action)
-
-        env.render()
-
-        if done:
-            env.reset()
-
-
-if __name__ == "__main__":
-    main()

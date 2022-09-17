@@ -128,5 +128,7 @@ dmypy.json
 
 # MacOS
 .DS_Store
-
+checkpoints
+submission
+video
 .idea

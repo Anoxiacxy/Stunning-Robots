@@ -1,6 +1,15 @@
-gym==0.25.2
+gym==0.25
 numpy==1.19.2
+opencv_python==4.6.0.66
 openpyxl==3.0.10
 PettingZoo==1.20.1
 pygame==2.1.2
+ray==2.0.0
+ray[rllib]
+pandas
+dm_tree
 setuptools==63.4.1
+SuperSuit==3.5.0
+torch
+torchvision
+torchaudio

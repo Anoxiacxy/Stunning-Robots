@@ -9,11 +9,10 @@ from pettingzoo import ParallelEnv
 from pettingzoo.utils import wrappers
 from pettingzoo.utils import parallel_to_aec
 
-from .manual_policy import ManualPolicy
 from .config import *
 
 
-def env(**kwargs):
+def aec_env(**kwargs):
     """
     The env function often wraps the environment in wrappers by default.
     You can find full documentation for these methods
@@ -40,8 +39,8 @@ def raw_env(**kwargs):
     return cur_env
 
 
-class MultiRobots(ParallelEnv):
-    metadata = {"render_modes": ["human"], "name": "MultiRobots"}
+class StunningRobots(ParallelEnv):
+    metadata = {"render_modes": ["human", "rgb_array"], "name": "MultiRobots", 'is_parallelizable': True}
 
     def __init__(self,
                  grids,
@@ -49,21 +48,25 @@ class MultiRobots(ParallelEnv):
                  goal_pos: List[List],
                  init_pos: List,
                  render_ratio=16,
+                 max_steps: Optional[int] = None,
+                 auto_render: bool = False,
                  fps=3,
                  **kwargs):
         super().__init__()
 
+        self.auto_render = auto_render
         self.infos = None
         self.font = None
         self.fps_clock = None
-        self.goal_mask = None
-        self.action_mask = None
+        self.has_goal = None
+        self.action_turn = None
         self.rewards = None
 
         self.possible_agents = [f"agent_{_}" for _ in range(len(init_pos))]
         self.agents = []
 
-        self.agent_name_mapping: Dict[str, int] = dict(zip(self.possible_agents, list(range(len(self.possible_agents)))))
+        self.agent_name_mapping: Dict[str, int] = dict(
+            zip(self.possible_agents, list(range(len(self.possible_agents)))))
         self.num_goals = len(goal_pos[0])
 
         self.grids: np.ndarray = np.array(grids, dtype=int)  # (h, w)
@@ -89,6 +92,7 @@ class MultiRobots(ParallelEnv):
         self.fps = fps
         self.screen = None
         self.margin = 10
+        self.max_steps = max_steps
 
     def reset(self,
               record: Optional[bool] = False,
@@ -101,8 +105,8 @@ class MultiRobots(ParallelEnv):
         self.agents_move_step = np.array([0 for _ in range(self.num_agents)])  # (n,)
         self.agents_goal_step = np.array([0 for _ in range(self.num_agents)])  # (n,)
 
-        self.action_mask = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
-        self.goal_mask = self.agents_goal_step < self.num_goals
+        self.action_turn = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
+        self.has_goal = self.agents_goal_step < self.num_goals
         return self._get_observations()
 
     def seed(self, seed=None):
@@ -117,73 +121,94 @@ class MultiRobots(ParallelEnv):
         - infos
         dicts where each dict looks like {agent_1: item_1, agent_2: item_2}
         """
-        self.action_mask = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
-        self.goal_mask = self.agents_goal_step < self.num_goals
+        # print(self.step_count)
+        self.action_turn = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
+        self.has_goal = self.agents_goal_step < self.num_goals
         self.rewards = np.zeros(self.max_num_agents)
-        self.infos = [[] for _ in range(self.max_num_agents)]
+        self.infos = [{} for _ in range(self.max_num_agents)]
 
         agents_next_pos = self.agents_pos.copy()
 
         for agent in self.agents:
+            if agent not in actions:
+                continue
             agent_id = self.agent_name_mapping[agent]
-            if self.action_mask[agent_id]:
+            if self.action_turn[agent_id]:
                 agents_next_pos[agent_id] += ACTION_MAP[actions[agent]]
-            elif actions[agent] != HOLD:
-                self.rewards[agent_id] -= 1
-                self.infos[agent_id].append(f"Invalid action: robot-{agent_id} at {self.agents_pos[agent_id]} "
-                                            f"{ACTION_MAP[actions[agent]]}")
+                # if actions[agent] == HOLD:
+                #     self.rewards[agent_id] -= 1
+                #     self.infos[agent_id]['Non-recommended action'] = \
+                #         f"robot-{agent_id} at {self.agents_pos[agent_id]} -> {ACTION_MAP[actions[agent]]}"
+            # else:
+            #     if actions[agent] != HOLD:
+            #         self.rewards[agent_id] -= 1
+            #         self.infos[agent_id]['Invalid action'] = \
+            #             f"robot-{agent_id} at {self.agents_pos[agent_id]} -> {ACTION_MAP[actions[agent]]}"
 
         # collision detection
         for i in range(self.max_num_agents):
             if not 0 <= agents_next_pos[i][0] < self.height:
                 agents_next_pos[i] = self.agents_pos[i].copy()
-                self.rewards[i] -= 1
-                self.infos[i].append(f"Invalid action: robot-{i} at {self.agents_pos[i]} "
-                                     f"{ACTION_MAP[actions[self.possible_agents[i]]]}")
+                self.rewards[i] += OUT_OF_BOUNDARY_REWARD
+                self.infos[i]['Out of boundary'] = \
+                    f"robot-{i} at {self.agents_pos[i]} -> " \
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
             if not 0 <= agents_next_pos[i][1] < self.width:
                 agents_next_pos[i] = self.agents_pos[i].copy()
-                self.rewards[i] -= 1
-                self.infos[i].append(f"Invalid action: robot-{i} at {self.agents_pos[i]} "
-                                     f"{ACTION_MAP[actions[self.possible_agents[i]]]}")
+                self.rewards[i] += OUT_OF_BOUNDARY_REWARD
+                self.infos[i]['Out of boundary'] = \
+                    f"robot-{i} at {self.agents_pos[i]} -> " \
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
             if self.grids[agents_next_pos[i][0], agents_next_pos[i][1]] != EMPTY:
                 agents_next_pos[i] = self.agents_pos[i].copy()
-                self.rewards[i] -= 1
-                self.infos[i].append(f"Invalid action: robot-{i} at {self.agents_pos[i]} "
-                                     f"{ACTION_MAP[actions[self.possible_agents[i]]]}")
+                self.rewards[i] += WALL_COLLISION_REWARD
+                self.infos[i]['Wall collision'] = \
+                    f"robot-{i} at {self.agents_pos[i]} -> " \
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
 
         while True:
             has_collision = False
             for i in range(self.max_num_agents):
-                if self.action_mask[i]:
+                if self.action_turn[i]:
                     for j in range(self.max_num_agents):
                         if j != i and (agents_next_pos[i] == agents_next_pos[j]).all():
                             if (agents_next_pos[i] != self.agents_pos[i]).any():
                                 agents_next_pos[i] = self.agents_pos[i].copy()
-                                self.rewards[i] -= 1
-                                self.infos[i].append(f"Invalid action: robot-{i} at {self.agents_pos[i]} "
-                                                     f"{ACTION_MAP[actions[self.possible_agents[i]]]}")
+                                self.rewards[i] += PEER_COLLISION_REWARD
+                                self.infos[i]['Peer collision'] = \
+                                    f"robot-{i} collision with robot-{j} at {self.agents_pos[i]} -> " \
+                                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
 
                             if (agents_next_pos[j] != self.agents_pos[j]).any():
                                 agents_next_pos[j] = self.agents_pos[j].copy()
-                                self.rewards[i] -= 1
-                                self.infos[j].append(f"Invalid action: robot-{j} at {self.agents_pos[j]} "
-                                                     f"{ACTION_MAP[actions[self.possible_agents[j]]]}")
+                                self.rewards[i] += PEER_COLLISION_REWARD
+                                self.infos[j]['Peer collision'] = \
+                                    f"robot-{j} collision with robot-{i} at {self.agents_pos[j]} -> " \
+                                    f"{self.agents_pos[j] + ACTION_MAP[actions[self.possible_agents[j]]]}"
                             has_collision = True
             if not has_collision:
                 break
 
         self.step_count += 1
-        self.agents_move_step += self.action_mask
+        self.agents_move_step += self.action_turn
+        agents_last_pos = self.agents_pos
         self.agents_pos = agents_next_pos
         for i in range(self.max_num_agents):
             j = self.agents_goal_step[i]
-            if self.action_mask[i] and self.goal_mask[i] \
-                    and (self.agents_pos[i] == self.agents_goal_pos[i][j]).all():
-                self.rewards[i] += 1
-                self.agents_goal_step[i] += 1
+            if self.action_turn[i] and self.has_goal[i]:
+                if (self.agents_pos[i] == self.agents_goal_pos[i][j]).all():
+                    self.rewards[i] += GOAL_REWARD
+                    self.agents_goal_step[i] += 1
+                else:
+                    last_dist = np.abs(self.agents_goal_pos[i][j] - agents_last_pos[i])
+                    next_dist = np.abs(self.agents_goal_pos[i][j] - agents_next_pos[i])
+                    if next_dist.sum() < last_dist.sum():
+                        self.rewards[i] += POTENTIAL_REWARD
+                    elif next_dist.sum() > last_dist.sum():
+                        self.rewards[i] -= POTENTIAL_REWARD
 
-        self.goal_mask = self.agents_goal_step < self.num_goals
-        self.action_mask = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
+        self.has_goal = self.agents_goal_step < self.num_goals
+        self.action_turn = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
 
         observations = self._get_observations()
         rewards = self._get_rewards()
@@ -191,10 +216,17 @@ class MultiRobots(ParallelEnv):
         infos = self._get_infos()
 
         self.agents = [agent for agent in self.agents if not dones[agent]]
+
+        if self.step_count % 100 == 0:
+            self.render("ansi")
+        if self.auto_render:
+            self.render(fps_limit=False)
+
         return observations, rewards, dones, infos
 
-    def render(self, mode='human'):
-        if mode in ['human', 'rgb_array'] and not pygame.get_init():
+    def render(self, mode='human', fps_limit=True):
+        if mode in ['human', 'rgb_array'] and \
+                (not pygame.get_init() or self.screen is None):
             pygame.init()
             self.font = pygame.font.Font(pygame.font.get_default_font(), self.render_ratio * 2 // 3)
             self.screen = pygame.display.set_mode((
@@ -202,13 +234,14 @@ class MultiRobots(ParallelEnv):
                 self.height * self.render_ratio + self.margin * 2),
             )
             # flags=pygame.OPENGL | pygame.DOUBLEBUF | pygame.NOFRAME)
-            pygame.display.set_caption('multi_robots')
+            pygame.display.set_caption('stunning_robots')
             self.fps_clock = pygame.time.Clock()
 
         if mode == "human":
             self._draw()
             # self.fps_clock.tick_busy_loop()
-            self.fps_clock.tick(self.fps)
+            if fps_limit:
+                self.fps_clock.tick(self.fps)
             pygame.display.update()
             return None
         elif mode == 'rgb_array':
@@ -216,7 +249,16 @@ class MultiRobots(ParallelEnv):
             rgb = np.array(pygame.surfarray.pixels3d(self.screen))
             return np.transpose(rgb, axes=(1, 0, 2))
         elif mode == 'ansi':
-            ...  # TODO
+            print(f"{self.step_count} -- ", end="")
+            for agent in self.agents:
+                agent_id = self.agent_name_mapping[agent]
+                if self.has_goal[agent_id]:
+                    distance = np.abs(self.agents_pos[agent_id]
+                                      - self.agents_goal_pos[agent_id][self.agents_goal_step[agent_id]])
+                else:
+                    distance = 0
+                print(f"{agent_id}: {distance} \t", end="")
+            print("")
 
     def _draw(self):
         self.screen.fill(white)
@@ -243,7 +285,7 @@ class MultiRobots(ParallelEnv):
         # Draw Goals
         for agent in self.agents:
             agent_id = self.agent_name_mapping[agent]
-            if self.goal_mask[agent_id]:
+            if self.has_goal[agent_id]:
                 text = self.font.render(f"{agent_id}", True, black)
                 center = (self.agents_goal_pos[agent_id][self.agents_goal_step[agent_id]]
                           * self.render_ratio + self.margin + (self.render_ratio / 2))[[1, 0]]
@@ -266,30 +308,36 @@ class MultiRobots(ParallelEnv):
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent) -> spaces.Space:
-        return spaces.MultiBinary((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE))
+        return spaces.Dict({
+            "obs": spaces.MultiBinary((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE)),
+            "action_mask": spaces.MultiBinary(ACTION_TYPE)
+        })
 
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent) -> spaces.Space:
         return spaces.Discrete(ACTION_TYPE)
 
-    def state(self) -> np.ndarray:
-        state = np.zeros((self.height, self.width, 1 + 1 + self.num_agents * SELF_TYPE))
+    def state(self) -> Dict:
+        state = np.zeros((self.height, self.width, 1 + 1 + self.max_num_agents * SELF_TYPE), dtype=np.int8)
         state[:, :, 0] = self.grids
         for i in range(self.max_num_agents):
             state[self.agents_pos[i][0], self.agents_pos[i][1], i * SELF_TYPE + 1] = 1
             cur_goal_step = self.agents_goal_step[i]
-            if self.goal_mask[i]:
+            if self.has_goal[i]:
                 state[self.agents_goal_pos[i][cur_goal_step][0],
                       self.agents_goal_pos[i][cur_goal_step][1], i * SELF_TYPE + 2] = 1
 
             for j in range(cur_goal_step, self.num_goals):
                 state[self.agents_goal_pos[i][j][0],
                       self.agents_goal_pos[i][j][1], i * SELF_TYPE + 3] = 1
-        return state
+        return {
+            "state": state,
+            "action_mask": self.action_turn
+        }
 
     def _get_observation(self, agent):
         agent_id = self.agent_name_mapping[agent]
-        obs = np.zeros((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE))
+        obs = np.zeros((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE), dtype=np.int8)
         obs[:, :, 0] = self.grids
         for other in self.agents:
             idx = self.agent_name_mapping[other]
@@ -297,7 +345,7 @@ class MultiRobots(ParallelEnv):
             if other == agent:
                 base += SELF_TYPE
             obs[self.agents_pos[idx][0], self.agents_pos[idx][1], base] = 1
-            if self.goal_mask[idx]:
+            if self.has_goal[idx]:
                 cur_goal_step = self.agents_goal_step[idx]
                 obs[self.agents_goal_pos[idx][cur_goal_step][0],
                     self.agents_goal_pos[idx][cur_goal_step][1], base + 1] = 1
@@ -305,12 +353,13 @@ class MultiRobots(ParallelEnv):
                 for i in range(cur_goal_step, self.num_goals):
                     obs[self.agents_goal_pos[idx][i][0],
                         self.agents_goal_pos[idx][i][1], base + 2] = 1
+
         mask = np.ones(ACTION_TYPE, dtype=np.int8)
-        if not self.action_mask[agent_id]:
+        if not self.action_turn[agent_id]:
             mask = np.zeros(ACTION_TYPE, dtype=np.int8)
             mask[HOLD] = 1
         return {
-            "observation": obs,
+            "obs": obs,
             "action_mask": mask
         }
 
@@ -326,7 +375,8 @@ class MultiRobots(ParallelEnv):
 
     def _get_done(self, agent):
         agent_id = self.agent_name_mapping[agent]
-        return not self.goal_mask[agent_id]
+        return (not self.has_goal[agent_id]) or \
+               (self.step_count >= self.max_steps if self.max_steps is not None else False)
 
     def _get_dones(self) -> Dict[str, bool]:
         return {agent: self._get_done(agent) for agent in self.agents}
@@ -340,16 +390,16 @@ class MultiRobots(ParallelEnv):
         return infos
 
     def _get_action_space(self) -> Dict[str, spaces.Space]:
-        return dict([(f"agent_{_}", spaces.Discrete(ACTION_TYPE)) for _ in range(self.num_agents)])
+        return dict([(f"agent_{_}", self.action_space(f"agent_{_}")) for _ in range(self.num_agents)])
 
     def _get_observation_space(self) -> Dict[str, spaces.Space]:
-        return dict([(f"agent_{_}", spaces.Dict({
-            "observation": spaces.MultiBinary((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE)),
-            "action_mask": spaces.MultiBinary(ACTION_TYPE)
-        })) for _ in range(self.num_agents)])
+        return dict([(f"agent_{_}", self.observation_space(f"agent_{_}")) for _ in range(self.num_agents)])
 
     def _get_state_space(self) -> spaces.Space:
-        return spaces.MultiBinary((self.height, self.width, 1 + self.num_agents * SELF_TYPE))
+        return spaces.Dict({
+            "action_mask": spaces.MultiBinary(self.max_num_agents),
+            "state": spaces.MultiBinary((self.height, self.width, 1 + self.num_agents * SELF_TYPE))
+        })
 
 
-parallel_env = MultiRobots
+parallel_env = StunningRobots
