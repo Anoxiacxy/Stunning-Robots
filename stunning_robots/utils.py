@@ -107,5 +107,6 @@ def save_rollout_xlsx(rollout_path, rollout_data: Dict):
             line = data[row - 1]
             for col in range(1, len(line) + 1):
                 worksheet.cell(row=row, column=col).value = line[col - 1]
+        workbook.active = worksheet
     # 工作簿保存到磁盘
     workbook.save(rollout_path)

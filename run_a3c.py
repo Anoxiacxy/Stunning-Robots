@@ -4,7 +4,7 @@ from typing import List
 
 import stunning_robots
 import argparse
-from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.a3c import A3CConfig
 from ray.tune.registry import register_env
 
 from stunning_robots.logger import RolloutLogger
@@ -69,50 +69,47 @@ def build(args, ckpt: int = None, config_path: str = None, max_steps=500, policy
 
     print(f"{policy_name} policy with mapping: {policy_mapping}")
 
-    config = PPOConfig().framework(
+    config = A3CConfig().framework(
         framework="torch"
     ).training(
         use_gae=True,
         entropy_coeff=0.1,
         vf_loss_coeff=0.25,
         train_batch_size=5000,
-        sgd_minibatch_size=100,
-        num_sgd_iter=10,
         lr=2e-5,
     ).multi_agent(
         policies=policies,
         policy_mapping_fn=(lambda agent_id: policy_mapping[agent_id]),
     ).rollouts(
-        num_rollout_workers=0,
         rollout_fragment_length=100,
     )
     # config.simple_optimizer = True
 
     # print(config.to_dict())
-    ppo = config.build(env=env_name)
+    a3c = config.build(env=env_name)
     if ckpt is not None:
-        ppo.restore(os.path.join(
-            checkpoints_path, f"ppo_{policy_name}-{ckpt}", f"checkpoint_{ckpt:06d}"))
+        a3c.restore(os.path.join(
+            checkpoints_path, f"a3c_{policy_name}-{ckpt}", f"checkpoint_{ckpt:06d}"))
 
-    return ppo, policy_mapping
+    return a3c, policy_mapping
 
 
-def train(args, ppo, cur_ckpt, episode=500, policy_name="single", checkpoint_every=10):
+def train(args, a3c, cur_ckpt, episode=500, policy_name="single", checkpoint_every=10):
     if cur_ckpt is None:
         cur_ckpt = 0
 
     for _ in range(1, episode + 1):
-        result = ppo.train()
+        result = a3c.train()
         print(pretty_print(result))
 
         if _ % checkpoint_every == 0:
-            checkpoint = ppo.save(os.path.join(
-                checkpoints_path, f"ppo_{policy_name}-{cur_ckpt + _}"))
+            checkpoint = a3c.save(os.path.join(
+                checkpoints_path, f"a3c_{policy_name}-{cur_ckpt + _}"))
             print("checkpoint saved at", checkpoint)
-    return ppo, cur_ckpt + episode
+    return a3c, cur_ckpt + episode
 
 
-def test(args, ppo, cur_ckpt, config_path: str = None, record=True,
+def test(args, a3c, cur_ckpt, config_path: str = None, record=True,
          max_steps=500, policy_mapping=None, policy_name="single", manual=None):
     if config_path is None:
         env = stunning_robots.parallel_env(**stunning_robots.DEFAULT_CONFIG, max_steps=max_steps)
@@ -120,7 +117,7 @@ def test(args, ppo, cur_ckpt, config_path: str = None, record=True,
         env = stunning_robots.parallel_env(**stunning_robots.load_map_config(os.path.join(os.path.dirname(
             __file__), 'stunning_robots', 'maps', config_path)), max_steps=max_steps)
 
-    logger = RolloutLogger(env.max_num_agents, f"ppo_{policy_name}", cur_ckpt, record)
+    logger = RolloutLogger(env.max_num_agents, f"a3c_{policy_name}", cur_ckpt, record)
     if manual is not None and isinstance(manual, int) and 0 <= manual < env.max_num_agents:
         manual_policy = stunning_robots.ManualPolicy(env, agent_id=manual)
     else:
@@ -135,7 +132,7 @@ def test(args, ppo, cur_ckpt, config_path: str = None, record=True,
     logger.add_step(observations, rewards, dones, infos, actions, frame)
 
     while not dones or not dones['__all__']:
-        actions = {agent: ppo.compute_single_action(
+        actions = {agent: a3c.compute_single_action(
             observations[agent], policy_id=policy_mapping[agent]
         ) for agent in observations.keys()}
 
@@ -149,13 +146,13 @@ def test(args, ppo, cur_ckpt, config_path: str = None, record=True,
         logger.add_step(observations, rewards, dones, infos, actions, frame)
 
     logger.release()
-    return ppo
+    return a3c
 
 
 def find_latest_checkpoint(args, policy="single"):
     dirs = os.listdir(checkpoints_path)
     ckpt = None
-    prefix = f"ppo_{policy}-"
+    prefix = f"a3c_{policy}-"
     for item in dirs:
         if item.startswith(prefix):
             ckpt = int(item[len(prefix):]) if ckpt is None else max(ckpt, int(item[len(prefix):]))
@@ -183,7 +180,7 @@ def main():
     else:
         checkpoint = find_latest_checkpoint(args, policy=args.policy)
 
-    ppo_algorithms, policy_mapping = build(
+    a3c_algorithms, policy_mapping = build(
         args,
         checkpoint,
         config_path=args.map,
@@ -195,7 +192,7 @@ def main():
     if args.phase == "train":
         train(
             args,
-            ppo_algorithms,
+            a3c_algorithms,
             checkpoint,
             episode=args.episode,
             policy_name=args.policy,
@@ -204,7 +201,7 @@ def main():
     elif args.phase == "test":
         test(
             args,
-            ppo_algorithms,
+            a3c_algorithms,
             checkpoint,
             manual=args.manual,
             record=args.record,

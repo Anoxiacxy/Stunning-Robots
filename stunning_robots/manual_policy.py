@@ -3,6 +3,7 @@ import pygame
 
 from .config import *
 
+
 class ManualPolicy:
     def __init__(self, env, agent_id: int = 0, show_obs: bool = False):
 
@@ -49,5 +50,3 @@ class ManualPolicy:
     @property
     def available_agents(self):
         return self.env.agents
-
-

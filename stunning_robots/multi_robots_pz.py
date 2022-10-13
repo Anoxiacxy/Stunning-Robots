@@ -1,7 +1,6 @@
 import functools
 
 import pygame
-import numpy as np
 
 from typing import List, Dict, Tuple, Any, Optional
 from gym import spaces
@@ -14,9 +13,7 @@ from .config import *
 
 def aec_env(**kwargs):
     """
-    The env function often wraps the environment in wrappers by default.
-    You can find full documentation for these methods
-    elsewhere in the developer documentation.
+    AEC 模式的环境，就是每个智能体按照某个顺序依次行动
     """
     cur_env = raw_env(**kwargs)
     # This wrapper is only for environments which print results to the terminal
@@ -27,6 +24,13 @@ def aec_env(**kwargs):
     # Strongly recommended
     cur_env = wrappers.OrderEnforcingWrapper(cur_env)
     return cur_env
+
+
+def parallel_env(**kwargs):
+    """
+    PARALLEL 模式的环境，所有的智能体在同一个时刻做出决策
+    """
+    return StunningRobots(**kwargs)
 
 
 def raw_env(**kwargs):
@@ -43,11 +47,11 @@ class StunningRobots(ParallelEnv):
     metadata = {"render_modes": ["human", "rgb_array"], "name": "MultiRobots", 'is_parallelizable': True}
 
     def __init__(self,
-                 grids,
+                 grids: List[List],
                  periodicity: List,
                  goal_pos: List[List],
                  init_pos: List,
-                 render_ratio=16,
+                 render_ratio: int = 16,
                  max_steps: Optional[int] = None,
                  auto_render: bool = False,
                  fps=3,
@@ -150,21 +154,29 @@ class StunningRobots(ParallelEnv):
             if not 0 <= agents_next_pos[i][0] < self.height:
                 agents_next_pos[i] = self.agents_pos[i].copy()
                 self.rewards[i] += OUT_OF_BOUNDARY_REWARD
-                self.infos[i]['Out of boundary'] = \
-                    f"robot-{i} at {self.agents_pos[i]} -> " \
-                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
+                self.infos[i]['Out of boundary'] = (
+                    f"robot-{i} at {self.agents_pos[i] + 1} -> "
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]] + 1}",
+                    OUT_OF_BOUNDARY_REWARD
+                )
+
             if not 0 <= agents_next_pos[i][1] < self.width:
                 agents_next_pos[i] = self.agents_pos[i].copy()
                 self.rewards[i] += OUT_OF_BOUNDARY_REWARD
-                self.infos[i]['Out of boundary'] = \
-                    f"robot-{i} at {self.agents_pos[i]} -> " \
-                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
-            if self.grids[agents_next_pos[i][0], agents_next_pos[i][1]] != EMPTY:
+                self.infos[i]['Out of boundary'] = (
+                    f"robot-{i} at {self.agents_pos[i] + 1} -> "
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]] + 1}",
+                    OUT_OF_BOUNDARY_REWARD
+                )
+
+            if not self.grids[agents_next_pos[i][0], agents_next_pos[i][1]]:
                 agents_next_pos[i] = self.agents_pos[i].copy()
                 self.rewards[i] += WALL_COLLISION_REWARD
-                self.infos[i]['Wall collision'] = \
-                    f"robot-{i} at {self.agents_pos[i]} -> " \
-                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
+                self.infos[i]['Wall collision'] = (
+                    f"robot-{i} at {self.agents_pos[i] + 1} -> "
+                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]] + 1}",
+                    WALL_COLLISION_REWARD
+                )
 
         while True:
             has_collision = False
@@ -175,16 +187,21 @@ class StunningRobots(ParallelEnv):
                             if (agents_next_pos[i] != self.agents_pos[i]).any():
                                 agents_next_pos[i] = self.agents_pos[i].copy()
                                 self.rewards[i] += PEER_COLLISION_REWARD
-                                self.infos[i]['Peer collision'] = \
-                                    f"robot-{i} collision with robot-{j} at {self.agents_pos[i]} -> " \
-                                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]]}"
+                                self.infos[i]['Peer collision'] = (
+                                    f"robot-{i} collides with robot-{j} at {self.agents_pos[i] + 1} -> "
+                                    f"{self.agents_pos[i] + ACTION_MAP[actions[self.possible_agents[i]]] + 1}",
+                                    PEER_COLLISION_REWARD
+                                )
 
                             if (agents_next_pos[j] != self.agents_pos[j]).any():
                                 agents_next_pos[j] = self.agents_pos[j].copy()
                                 self.rewards[i] += PEER_COLLISION_REWARD
-                                self.infos[j]['Peer collision'] = \
-                                    f"robot-{j} collision with robot-{i} at {self.agents_pos[j]} -> " \
-                                    f"{self.agents_pos[j] + ACTION_MAP[actions[self.possible_agents[j]]]}"
+                                self.infos[j]['Peer collision'] = (
+                                    f"robot-{j} collides with robot-{i} at {self.agents_pos[j] + 1} -> "
+                                    f"{self.agents_pos[j] + ACTION_MAP[actions[self.possible_agents[j]]] + 1}",
+                                    PEER_COLLISION_REWARD
+                                )
+
                             has_collision = True
             if not has_collision:
                 break
@@ -196,16 +213,37 @@ class StunningRobots(ParallelEnv):
         for i in range(self.max_num_agents):
             j = self.agents_goal_step[i]
             if self.action_turn[i] and self.has_goal[i]:
+                # 轮到该智能体行动的时候
                 if (self.agents_pos[i] == self.agents_goal_pos[i][j]).all():
+                    # 到达目标的奖励分数
                     self.rewards[i] += GOAL_REWARD
                     self.agents_goal_step[i] += 1
+                    self.infos[i]['Goal'] = (
+                        f"robot-{i} reaches goal {self.agents_goal_step[i]} at {self.agents_pos[i] + 1}",
+                        GOAL_REWARD
+                    )
+
                 else:
+                    # 未到达目标
+                    self.infos[i]['Time'] = (
+                        None,
+                        TIME_PUNISHMENT
+                    )
+                    self.rewards[i] += TIME_PUNISHMENT
                     last_dist = np.abs(self.agents_goal_pos[i][j] - agents_last_pos[i])
                     next_dist = np.abs(self.agents_goal_pos[i][j] - agents_next_pos[i])
                     if next_dist.sum() < last_dist.sum():
                         self.rewards[i] += POTENTIAL_REWARD
+                        self.infos[i]['Potential'] = (
+                            None,
+                            POTENTIAL_REWARD
+                        )
                     elif next_dist.sum() > last_dist.sum():
                         self.rewards[i] -= POTENTIAL_REWARD
+                        self.infos[i]['Potential'] = (
+                            None,
+                            -POTENTIAL_REWARD
+                        )
 
         self.has_goal = self.agents_goal_step < self.num_goals
         self.action_turn = self.step_count + EPS >= self.agents_move_step * self.agents_periodicity
@@ -276,7 +314,7 @@ class StunningRobots(ParallelEnv):
         # Draw Barriers
         for i in range(self.width):
             for j in range(self.height):
-                if self.grids[j][i] == BLOCK:
+                if not self.grids[j][i]:
                     rect = pygame.Rect(
                         (self.margin + i * self.render_ratio, self.margin + j * self.render_ratio),
                         (self.render_ratio, self.render_ratio))
@@ -309,7 +347,7 @@ class StunningRobots(ParallelEnv):
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent) -> spaces.Space:
         return spaces.Dict({
-            "obs": spaces.MultiBinary((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE)),
+            "obs": spaces.MultiBinary((self.height, self.width, CELL_TYPE + SELF_TYPE + OTHER_TYPE)),
             "action_mask": spaces.MultiBinary(ACTION_TYPE)
         })
 
@@ -318,44 +356,44 @@ class StunningRobots(ParallelEnv):
         return spaces.Discrete(ACTION_TYPE)
 
     def state(self) -> Dict:
-        state = np.zeros((self.height, self.width, 1 + 1 + self.max_num_agents * SELF_TYPE), dtype=np.int8)
-        state[:, :, 0] = self.grids
+        state = np.zeros((self.height, self.width, CELL_TYPE + self.max_num_agents * SELF_TYPE), dtype=np.int8)
+        state[:, :, GRID] = self.grids
         for i in range(self.max_num_agents):
-            state[self.agents_pos[i][0], self.agents_pos[i][1], i * SELF_TYPE + 1] = 1
+            state[self.agents_pos[i][0], self.agents_pos[i][1], i * SELF_TYPE + CELL_TYPE] = 1
             cur_goal_step = self.agents_goal_step[i]
             if self.has_goal[i]:
                 state[self.agents_goal_pos[i][cur_goal_step][0],
-                      self.agents_goal_pos[i][cur_goal_step][1], i * SELF_TYPE + 2] = 1
+                      self.agents_goal_pos[i][cur_goal_step][1], i * SELF_TYPE + CELL_TYPE + 1] = 1
 
             for j in range(cur_goal_step, self.num_goals):
                 state[self.agents_goal_pos[i][j][0],
-                      self.agents_goal_pos[i][j][1], i * SELF_TYPE + 3] = 1
+                      self.agents_goal_pos[i][j][1], i * SELF_TYPE + CELL_TYPE + 2] = 1
         return {
             "state": state,
-            "action_mask": self.action_turn
+            "action_turn": self.action_turn
         }
 
     def _get_observation(self, agent):
         agent_id = self.agent_name_mapping[agent]
-        obs = np.zeros((self.height, self.width, 1 + SELF_TYPE + OTHER_TYPE), dtype=np.int8)
-        obs[:, :, 0] = self.grids
+        obs = np.zeros((self.height, self.width, CELL_TYPE + OTHER_TYPE + SELF_TYPE), dtype=np.int8)
+        obs[:, :, GRID] = self.grids
         for other in self.agents:
             idx = self.agent_name_mapping[other]
-            base = 1
+            base = OTHER_AGENTS, OTHER_GOAL, OTHER_GOALS
             if other == agent:
-                base += SELF_TYPE
-            obs[self.agents_pos[idx][0], self.agents_pos[idx][1], base] = 1
+                base = SELF_AGENT, SELF_GOAL, SELF_GOALS
+            obs[self.agents_pos[idx][0], self.agents_pos[idx][1], base[0]] = 1
             if self.has_goal[idx]:
                 cur_goal_step = self.agents_goal_step[idx]
                 obs[self.agents_goal_pos[idx][cur_goal_step][0],
-                    self.agents_goal_pos[idx][cur_goal_step][1], base + 1] = 1
+                    self.agents_goal_pos[idx][cur_goal_step][1], base[1]] = 1
 
                 for i in range(cur_goal_step, self.num_goals):
                     obs[self.agents_goal_pos[idx][i][0],
-                        self.agents_goal_pos[idx][i][1], base + 2] = 1
+                        self.agents_goal_pos[idx][i][1], base[2]] = 1
 
         mask = np.ones(ACTION_TYPE, dtype=np.int8)
-        if not self.action_turn[agent_id]:
+        if not self.action_turn[agent_id] or not self.has_goal[agent_id]:
             mask = np.zeros(ACTION_TYPE, dtype=np.int8)
             mask[HOLD] = 1
         return {
@@ -397,9 +435,6 @@ class StunningRobots(ParallelEnv):
 
     def _get_state_space(self) -> spaces.Space:
         return spaces.Dict({
-            "action_mask": spaces.MultiBinary(self.max_num_agents),
-            "state": spaces.MultiBinary((self.height, self.width, 1 + self.num_agents * SELF_TYPE))
+            "action_turn": spaces.MultiBinary(self.max_num_agents),
+            "state": spaces.MultiBinary((self.height, self.width, CELL_TYPE + self.max_num_agents * SELF_TYPE))
         })
-
-
-parallel_env = StunningRobots
