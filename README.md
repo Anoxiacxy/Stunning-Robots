@@ -16,7 +16,7 @@ Stunning-Robots 是多智能体目标协同路径规划任务的强化学习环�
 
 **智能体**可以在地图上向上下左右移动，或者保持不动。环境中允许每个智能体有着不同的速度，我们假设所有智能体速度的最小公倍数为 L, 那么对于一个速度为 S 的智能体来说，它只允许在 L/S 的倍数轮次中移动。在不被允许移动的轮次，会有一个 action_mask 告知该智能体只能保持原地不动。
 
-| Import             | from pettingzoo.classic import go_v5 |
+| Import             | import stunning_robots |
 |--------------------|--------------------------------------|
 | Actions            | Discrete                             |
 | Parallel API       | Yes                                  |
